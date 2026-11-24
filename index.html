@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大富豪 AI対戦</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="game">
+      <header>
+        <h1>大富豪 AI対戦</h1>
+        <button id="restart-button" type="button">新しいゲーム</button>
+      </header>
+
+      <section id="status" class="status" aria-live="polite"></section>
+
+      <section class="opponents" aria-label="対戦相手">
+        <article class="opponent" data-player="1">
+          <h2>AI 1</h2>
+          <span class="turn-indicator" hidden>手番</span>
+          <span class="card-count"></span>
+          <span class="pass-indicator" aria-live="polite" hidden>[パス]</span>
+        </article>
+        <article class="opponent" data-player="2">
+          <h2>AI 2</h2>
+          <span class="turn-indicator" hidden>手番</span>
+          <span class="card-count"></span>
+          <span class="pass-indicator" aria-live="polite" hidden>[パス]</span>
+        </article>
+        <article class="opponent" data-player="3">
+          <h2>AI 3</h2>
+          <span class="turn-indicator" hidden>手番</span>
+          <span class="card-count"></span>
+          <span class="pass-indicator" aria-live="polite" hidden>[パス]</span>
+        </article>
+      </section>
+
+      <section class="table" aria-label="場札">
+        <div id="table-card" class="table-card"></div>
+      </section>
+
+      <section class="player" aria-label="プレイヤーの手札">
+        <h2>あなた</h2>
+        <span id="human-turn-indicator" class="turn-indicator" hidden>あなたの番</span>
+        <div id="hand" class="hand"></div>
+        <button id="pass-button" type="button">パス</button>
+        <button id="skip-action-button" type="button" hidden>渡さない</button>
+      </section>
+    </main>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
