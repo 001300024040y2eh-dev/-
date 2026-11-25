@@ -1,4 +1,5 @@
 import { DaifugoGame } from "./game.js";
+import { playCardSound } from "./sound.js";
 
 const statusElement = document.querySelector("#status");
 const handElement = document.querySelector("#hand");
@@ -6,6 +7,8 @@ const tableCardElement = document.querySelector("#table-card");
 const playerElement = document.querySelector(".player");
 const humanTurnIndicator = document.querySelector("#human-turn-indicator");
 const passButton = document.querySelector("#pass-button");
+const revolutionButton = document.querySelector("#revolution-button");
+const playRevolutionButton = document.querySelector("#play-revolution-button");
 const skipActionButton = document.querySelector("#skip-action-button");
 const restartButton = document.querySelector("#restart-button");
 const opponentElements = document.querySelectorAll(".opponent");
@@ -19,9 +22,19 @@ let flightCard = null;
 let flightAnimation = null;
 let pendingGiftCard = null;
 let pendingDiscardCard = null;
+let selectingRevolution = false;
+let selectedRevolutionCards = new Set();
 
 function cardLabel(card) {
   return card ? (card.joker ? "ジョーカー" : `${card.suit}${card.rank}`) : "";
+}
+
+function canCompleteRevolution(hand, value) {
+  const naturalCount = hand.filter((card) =>
+    !card.joker && card.value === value
+  ).length;
+  const jokerCount = hand.filter((card) => card.joker).length;
+  return naturalCount > 0 && naturalCount + jokerCount >= 4;
 }
 
 function render() {
@@ -47,6 +60,13 @@ function render() {
   handElement.replaceChildren();
   const pendingActionCard = pendingGiftCard ?? pendingDiscardCard;
   handElement.classList.toggle("card-selection", pendingActionCard !== null);
+  const selectedRevolutionCard = [...selectedRevolutionCards]
+    .map((id) => game.hands[0].find((card) => card.id === id))
+    .find((card) => card && !card.joker);
+  const selectedJokerCount = [...selectedRevolutionCards]
+    .map((id) => game.hands[0].find((card) => card.id === id))
+    .filter((card) => card?.joker).length;
+  const handJokerCount = game.hands[0].filter((card) => card.joker).length;
   game.hands[0].forEach((card) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -70,8 +90,22 @@ function render() {
     } else {
       button.textContent = cardLabel(card);
     }
+    const revolutionRankAvailable = selectedRevolutionCards.has(card.id) ||
+      (selectedRevolutionCards.size < 4 &&
+        (card.joker
+          ? selectedRevolutionCard !== undefined &&
+            selectedJokerCount < handJokerCount
+          : canCompleteRevolution(game.hands[0], card.value)));
+    button.classList.toggle(
+      "revolution-selected",
+      selectedRevolutionCards.has(card.id)
+    );
     button.disabled = pendingActionCard
       ? card.id === pendingActionCard.id
+      : selectingRevolution
+        ? !revolutionRankAvailable ||
+        game.finished || game.currentPlayer !== 0 ||
+        cutCard !== null || cardAnimating
       : game.finished || game.currentPlayer !== 0 ||
         cutCard !== null || cardAnimating || !game.canPlay(0, card);
     button.addEventListener("click", () => {
@@ -86,6 +120,20 @@ function render() {
         const playedCard = pendingDiscardCard;
         pendingDiscardCard = null;
         if (!playCard(0, playedCard, null, card.id)) render();
+        return;
+      }
+
+      if (selectingRevolution) {
+        if (selectedRevolutionCards.has(card.id)) {
+          selectedRevolutionCards.delete(card.id);
+        } else {
+          if (!card.joker && selectedRevolutionCard &&
+              selectedRevolutionCard.value !== card.value) {
+            selectedRevolutionCards.clear();
+          }
+          selectedRevolutionCards.add(card.id);
+        }
+        render();
         return;
       }
 
@@ -108,10 +156,20 @@ function render() {
   });
 
   const visibleTableCard = cutCard ?? game.tableCard;
+  const visibleTableCards = cutCard
+    ? [cutCard]
+    : game.tableCard
+      ? game.tableCards.length > 0 ? game.tableCards : [game.tableCard]
+      : [];
   tableCardElement.replaceChildren();
   tableCardElement.className =
     `table-card${cutCard ? " cut-in" : ""}${cardAnimating ? " arriving" : ""}${visibleTableCard && (visibleTableCard.joker || ["♥", "♦"].includes(visibleTableCard.suit)) ? " red" : ""}`;
-  if (visibleTableCard?.joker) {
+  if (visibleTableCards.length > 1) {
+    const group = document.createElement("div");
+    group.className = "table-cards";
+    group.textContent = visibleTableCards.map(cardLabel).join(" ");
+    tableCardElement.append(group);
+  } else if (visibleTableCard?.joker) {
     const image = document.createElement("img");
     image.className = "joker-image";
     image.src = "./joker.svg";
@@ -120,13 +178,33 @@ function render() {
   } else if (visibleTableCard) {
     tableCardElement.textContent = cardLabel(visibleTableCard);
   }
+  const revolutionCanBePlayed = selectedRevolutionCards.size === 4 &&
+    game.canPlay(
+      0,
+      game.hands[0].filter((card) => selectedRevolutionCards.has(card.id))
+    );
+  revolutionButton.textContent = selectingRevolution
+    ? "革命選択を解除"
+    : "革命を選択";
+  revolutionButton.disabled = game.finished || game.currentPlayer !== 0 ||
+    cutCard !== null || cardAnimating ||
+    (!selectingRevolution && !game.hands[0].some((card) =>
+      !card.joker && canCompleteRevolution(game.hands[0], card.value)
+    ));
+  playRevolutionButton.disabled = !revolutionCanBePlayed ||
+    cutCard !== null || cardAnimating;
+  revolutionButton.hidden = pendingActionCard !== null;
+  playRevolutionButton.hidden = !selectingRevolution;
   passButton.disabled =
     game.finished || game.currentPlayer !== 0 || pendingActionCard !== null ||
     cutCard !== null || cardAnimating;
   skipActionButton.hidden = pendingActionCard === null;
   skipActionButton.textContent =
     pendingDiscardCard ? "捨てない" : "渡さない";
-  const backStatus = game.elevenBackActive ? "／イレブンバック中" : "";
+  const backStatus = [
+    game.elevenBackActive ? "イレブンバック中" : "",
+    game.revolutionActive ? "革命中" : ""
+  ].filter(Boolean).map((text) => `／${text}`).join("");
 
   if (pendingDiscardCard) {
     statusElement.textContent =
@@ -138,19 +216,24 @@ function render() {
     statusElement.textContent =
       `${effect}：${names[recipient]}に渡すカードを選んでください${backStatus}`;
   } else if (game.finished) {
-    statusElement.textContent =
-      game.winners[0] === 0
-        ? "あなたの勝ちです！"
-        : `AI ${game.winners[0]}の勝ちです！`;
+    const names = ["あなた", "AI 1", "AI 2", "AI 3"];
+    const placements = game.winners.map(
+      (player, index) => `${index + 1}位：${names[player]}`
+    );
+    if (game.lastPlacePlayer !== null) {
+      placements.push(`最下位：${names[game.lastPlacePlayer]}`);
+    }
+    statusElement.textContent = `ゲーム終了！ ${placements.join(" ／ ")}`;
   } else {
     const names = ["あなた", "AI 1", "AI 2", "AI 3"];
     const tableStatus = cutCard
       ? `／場札：${cardLabel(cutCard)}（場切り）`
       : game.tableCard
-        ? `／場札：${cardLabel(game.tableCard)}`
+        ? `／場札：${visibleTableCards.map(cardLabel).join(" ")}`
         : "／場札なし";
-    statusElement.textContent =
-      `${names[game.currentPlayer]}の手番です${tableStatus}${backStatus}`;
+      statusElement.textContent = selectingRevolution
+        ? "革命：同じ番号のカードを4枚選んでください"
+        : `${names[game.currentPlayer]}の手番です${tableStatus}${backStatus}`;
   }
 
   if (!game.finished && game.currentPlayer !== 0) {
@@ -159,11 +242,19 @@ function render() {
 }
 
 function playCard(player, card, giftCardId = null, discardCardId = null) {
-  const sourceRect = getCardSourceRect(player, card);
-  const cutsTable = card.value === 8 ||
-    (card.value === 3 &&
-      (game.tableCard?.joker === true || game.elevenBackActive));
+  const cards = Array.isArray(card) ? card : [card];
+  const playedCard = cards[0];
+  const sourceRect = getCardSourceRect(player, playedCard);
+  const cutsTable = cards.length === 1 && (
+    playedCard.value === 8 ||
+    (playedCard.value === 3 &&
+      (game.tableCard?.joker === true || game.elevenBackActive ||
+        game.revolutionActive))
+  );
   if (!game.play(player, card, giftCardId, discardCardId)) return false;
+  playCardSound(cards.length === 4);
+  selectingRevolution = false;
+  selectedRevolutionCards.clear();
 
   if (cutTimer !== null) window.clearTimeout(cutTimer);
   cutCard = cutsTable ? card : null;
@@ -177,7 +268,7 @@ function playCard(player, card, giftCardId = null, discardCardId = null) {
   cardAnimating = sourceRect !== null;
   render();
   if (sourceRect) {
-    animateCardToTable(card, sourceRect, tableCardElement.getBoundingClientRect());
+    animateCardToTable(playedCard, sourceRect, tableCardElement.getBoundingClientRect());
   }
   return true;
 }
@@ -315,6 +406,8 @@ function scheduleAiTurn() {
 }
 
 passButton.addEventListener("click", () => {
+  selectingRevolution = false;
+  selectedRevolutionCards.clear();
   if (game.pass(0)) {
     render();
   }
@@ -332,6 +425,19 @@ skipActionButton.addEventListener("click", () => {
   }
 });
 
+revolutionButton.addEventListener("click", () => {
+  selectingRevolution = !selectingRevolution;
+  selectedRevolutionCards.clear();
+  render();
+});
+
+playRevolutionButton.addEventListener("click", () => {
+  const cards = game.hands[0].filter((card) =>
+    selectedRevolutionCards.has(card.id)
+  );
+  if (!playCard(0, cards)) render();
+});
+
 restartButton.addEventListener("click", () => {
   if (aiTimer !== null) window.clearTimeout(aiTimer);
   if (cutTimer !== null) window.clearTimeout(cutTimer);
@@ -341,6 +447,8 @@ restartButton.addEventListener("click", () => {
   cutCard = null;
   pendingGiftCard = null;
   pendingDiscardCard = null;
+  selectingRevolution = false;
+  selectedRevolutionCards.clear();
   game = new DaifugoGame();
   render();
 });

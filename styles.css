@@ -233,6 +233,8 @@ h1 {
 }
 
 #restart-button,
+#revolution-button,
+#play-revolution-button,
 #pass-button,
 #skip-action-button {
   border: 0;
@@ -245,6 +247,8 @@ h1 {
 }
 
 #pass-button:disabled,
+#revolution-button:disabled,
+#play-revolution-button:disabled,
 #skip-action-button:disabled {
   cursor: default;
   opacity: 0.45;
@@ -252,4 +256,15 @@ h1 {
 
 .hand.card-selection .card:not(:disabled) {
   outline: 3px solid #facc15;
+}
+
+.card.revolution-selected {
+  outline: 3px solid #facc15;
+  transform: translateY(-8px);
+}
+
+.table-cards {
+  padding: 8px;
+  font-size: 15px;
+  text-align: center;
 }

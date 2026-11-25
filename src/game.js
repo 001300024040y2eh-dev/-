@@ -46,9 +46,18 @@ export function shuffle(cards, random = Math.random) {
   return shuffled;
 }
 
-export function compareCards(card, tableCard, reversed = false) {
-  if (reversed && card.joker) return false;
+export function compareCards(
+  card,
+  tableCard,
+  reversed = false,
+  revolutionActive = false
+) {
   if (tableCard === null) return true;
+  if (revolutionActive) {
+    if (tableCard.joker) return card.value === 15;
+    if (card.joker) return !tableCard.joker && tableCard.value !== 15;
+  }
+  if (reversed && card.joker) return false;
   if (card.joker) {
     return tableCard.joker ? false : tableCard.value !== 3;
   }
@@ -67,6 +76,10 @@ export function sortHand(hand) {
   });
 }
 
+function getRevolutionRank(cards) {
+  return cards.find((card) => !card.joker)?.value ?? null;
+}
+
 export class DaifugoGame {
   constructor({ random = Math.random } = {}) {
     this.random = random;
@@ -74,11 +87,14 @@ export class DaifugoGame {
     this.currentPlayer = 0;
     this.leadPlayer = 0;
     this.tableCard = null;
+    this.tableCards = [];
     this.elevenBackActive = false;
+    this.revolutionActive = false;
     this.consecutivePasses = 0;
     this.passedPlayers = new Set();
     this.skippedPlayer = null;
     this.winners = [];
+    this.lastPlacePlayer = null;
     this.finished = false;
     this.deal();
   }
@@ -99,16 +115,41 @@ export class DaifugoGame {
 
   canPlay(player, card) {
     if (this.finished || player !== this.currentPlayer) return false;
-    if (!this.hands[player].some((handCard) => handCard.id === card.id)) {
+    const cards = Array.isArray(card) ? card : [card];
+    if (
+      cards.length === 0 ||
+      new Set(cards.map((playedCard) => playedCard.id)).size !== cards.length ||
+      cards.some((playedCard) =>
+        !this.hands[player].some((handCard) => handCard.id === playedCard.id)
+      )
+    ) {
       return false;
     }
-    if (card.joker) {
+    const revolutionRank = getRevolutionRank(cards);
+    const revolutionPlay = cards.length === 4 &&
+      revolutionRank !== null &&
+      cards.every((playedCard) =>
+        playedCard.joker || playedCard.value === revolutionRank
+      );
+    if (cards.length !== 1 && !revolutionPlay) return false;
+    const tableCount = this.tableCard === null
+      ? cards.length
+      : this.tableCards.length || 1;
+    if (tableCount !== cards.length) {
+      return false;
+    }
+    if (cards.length === 1 && cards[0].joker) {
       const nonJokers = this.hands[player].filter(
         (handCard) => !handCard.joker
       );
       if (nonJokers.length === 0) return false;
     }
-    return compareCards(card, this.tableCard, this.elevenBackActive);
+    return compareCards(
+      revolutionPlay ? { value: revolutionRank } : cards[0],
+      this.tableCard,
+      this.elevenBackActive || this.revolutionActive,
+      this.revolutionActive
+    );
   }
 
   getPreviousActivePlayer(player) {
@@ -171,32 +212,42 @@ export class DaifugoGame {
   play(player, card, giftCardId = null, discardCardId = null) {
     if (!this.canPlay(player, card)) return false;
 
-    const giftRecipient = this.getGiftRecipient(player, card);
+    const cards = Array.isArray(card) ? card : [card];
+    const playedCard = cards.length === 4
+      ? cards.find((played) => !played.joker)
+      : cards[0];
+    const giftRecipient = this.getGiftRecipient(player, playedCard);
     const giftCard = giftCardId === null
       ? null
       : this.hands[player].find(
-        (handCard) => handCard.id === giftCardId && handCard.id !== card.id
+        (handCard) =>
+          handCard.id === giftCardId &&
+          !cards.some((played) => played.id === handCard.id)
       );
     const discardCard = discardCardId === null
       ? null
       : this.hands[player].find(
-        (handCard) => handCard.id === discardCardId && handCard.id !== card.id
+        (handCard) =>
+          handCard.id === discardCardId &&
+          !cards.some((played) => played.id === handCard.id)
       );
     if (
       (giftCardId !== null && (!giftCard || giftRecipient === null)) ||
-      (discardCardId !== null && (card.value !== 10 || !discardCard)) ||
-      (giftCardId !== null && discardCardId !== null)
+      (discardCardId !== null && (playedCard.value !== 10 || !discardCard)) ||
+      (giftCardId !== null && discardCardId !== null) ||
+      (cards.length > 1 && (giftCardId !== null || discardCardId !== null))
     ) {
       return false;
     }
 
     const wasJokerOnTable = this.tableCard?.joker === true;
     const wasElevenBackActive = this.elevenBackActive;
+    const wasRevolutionActive = this.revolutionActive;
     this.passedPlayers.clear();
     this.skippedPlayer = null;
     this.hands[player] = this.hands[player].filter(
       (handCard) =>
-        handCard.id !== card.id &&
+        !cards.some((played) => played.id === handCard.id) &&
         handCard.id !== giftCard?.id &&
         handCard.id !== discardCard?.id
     );
@@ -204,15 +255,21 @@ export class DaifugoGame {
       this.hands[giftRecipient].push(giftCard);
       this.hands[giftRecipient] = sortHand(this.hands[giftRecipient]);
     }
-    this.tableCard = card;
+    this.tableCards = cards;
+    this.tableCard = playedCard;
     this.leadPlayer = player;
     this.consecutivePasses = 0;
-    if (card.value === 11) this.elevenBackActive = true;
+    if (playedCard.value === 11) this.elevenBackActive = true;
+    if (cards.length === 4) this.revolutionActive = !this.revolutionActive;
 
-    const cutsTable = card.value === 8 ||
-      (card.value === 3 && (wasJokerOnTable || wasElevenBackActive));
+    const cutsTable = cards.length === 1 && (
+      playedCard.value === 8 ||
+      (playedCard.value === 3 &&
+        (wasJokerOnTable || wasElevenBackActive || wasRevolutionActive))
+    );
     if (cutsTable) {
       this.tableCard = null;
+      this.tableCards = [];
       this.elevenBackActive = false;
       this.consecutivePasses = 0;
       this.passedPlayers.clear();
@@ -224,7 +281,8 @@ export class DaifugoGame {
 
     if (this.hands[player].length === 0) {
       this.winners.push(player);
-      if (this.winners.length === 1) {
+      if (this.winners.length >= 3 || this.activePlayers.length <= 1) {
+        this.lastPlacePlayer = this.activePlayers[0] ?? null;
         this.finished = true;
         return true;
       }
@@ -232,7 +290,7 @@ export class DaifugoGame {
 
     if (cutsTable) return true;
 
-    const skippedPlayer = card.value === 5
+    const skippedPlayer = cards.length === 1 && playedCard.value === 5
       ? this.getNextActivePlayer(player)
       : null;
     if (skippedPlayer !== null) {
@@ -252,6 +310,7 @@ export class DaifugoGame {
     const activeCount = this.activePlayers.length;
     if (this.consecutivePasses >= activeCount - 1) {
       this.tableCard = null;
+      this.tableCards = [];
       this.elevenBackActive = false;
       this.consecutivePasses = 0;
       this.currentPlayer = this.leadPlayer;
@@ -276,17 +335,34 @@ export class DaifugoGame {
 
   chooseAiCard(player) {
     if (player !== this.currentPlayer) return null;
+    const byRank = new Map();
+    const jokers = this.hands[player].filter((card) => card.joker);
+    for (const card of this.hands[player]) {
+      if (card.joker) continue;
+      const group = byRank.get(card.value) ?? [];
+      group.push(card);
+      byRank.set(card.value, group);
+    }
+    const revolutionPlay = [...byRank.values()].map((cards) => {
+      const jokerCount = Math.max(0, 4 - cards.length);
+      return jokerCount <= jokers.length
+        ? [...cards.slice(0, 4 - jokerCount), ...jokers.slice(0, jokerCount)]
+        : null;
+    }).find((cards) => cards && this.canPlay(player, cards));
+    if (revolutionPlay && this.tableCard === null) return revolutionPlay;
+
     const playable = this.hands[player].filter((card) =>
       this.canPlay(player, card)
     );
-    if (playable.length === 0) return null;
+    if (playable.length === 0) return revolutionPlay ?? null;
 
     const urgent = this.hands[player].length === 1 ||
       this.hands[this.leadPlayer].length === 1;
     const handSize = this.hands[player].length;
     const preserveFrom = handSize >= 9 ? 13 : handSize >= 5 ? 15 : Infinity;
     const preserveThrough = handSize >= 9 ? 5 : handSize >= 5 ? 3 : -Infinity;
-    const economical = this.elevenBackActive
+    const reversed = this.elevenBackActive || this.revolutionActive;
+    const economical = reversed
       ? playable.filter((card) => card.value > preserveThrough)
       : playable.filter((card) =>
         (card.joker ? 16 : card.value) < preserveFrom
@@ -294,7 +370,7 @@ export class DaifugoGame {
     if (!urgent && this.tableCard && economical.length === 0) return null;
 
     const choices = economical.length > 0 ? economical : playable;
-    return this.elevenBackActive
+    return reversed
       ? [...choices].sort((a, b) => b.value - a.value)[0]
       : sortHand(choices)[0];
   }

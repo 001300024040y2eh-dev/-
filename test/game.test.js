@@ -62,6 +62,123 @@ test("joker beats normal cards but cannot beat a 3", () => {
   assert.equal(compareCards(joker, { joker: true, id: "joker-2" }), false);
 });
 
+test("revolution reverses strength and lets a 2 beat a joker", () => {
+  const joker = { joker: true, id: "joker-1" };
+  const two = { value: 15 };
+  const three = { value: 3 };
+  const ten = { value: 10 };
+
+  assert.equal(compareCards(three, ten, true, true), true);
+  assert.equal(compareCards(joker, three, true, true), true);
+  assert.equal(compareCards(two, joker, true, true), true);
+  assert.equal(compareCards(joker, two, true, true), false);
+});
+
+test("four matching cards toggle persistent revolution and AI can play them", () => {
+  const game = new DaifugoGame({ random: () => 0.42 });
+  const group = (value, prefix) => ["♠", "♥", "♦", "♣"].map((suit) => ({
+    id: `${prefix}-${suit}`,
+    suit,
+    value,
+    rank: String(value)
+  }));
+  const revolution = group(9, "first");
+  const reverseRevolution = group(8, "second");
+  const normalPlay = group(10, "third");
+  game.hands = [
+    [...revolution, { id: "keep-0", value: 3 }],
+    [...reverseRevolution, { id: "keep-1", value: 3 }],
+    [...normalPlay, { id: "keep-2", value: 3 }],
+    [{ id: "keep-3", value: 3 }]
+  ];
+  game.currentPlayer = 0;
+
+  assert.equal(game.canPlay(0, revolution), true);
+  assert.equal(game.play(0, revolution), true);
+  assert.equal(game.revolutionActive, true);
+  assert.deepEqual(game.tableCards, revolution);
+  assert.equal(game.canPlay(1, reverseRevolution), true);
+  assert.equal(game.play(1, reverseRevolution), true);
+  assert.equal(game.revolutionActive, false);
+  assert.equal(game.canPlay(2, normalPlay), true);
+
+  game.tableCard = null;
+  game.tableCards = [];
+  game.currentPlayer = 3;
+  game.hands[3] = [...group(6, "ai"), { id: "keep-ai", value: 3 }];
+  const aiCards = game.chooseAiCard(3);
+  assert.equal(Array.isArray(aiCards), true);
+  assert.equal(aiCards.length, 4);
+  assert.equal(game.play(3, aiCards), true);
+  assert.equal(game.revolutionActive, true);
+});
+
+test("a joker completes a revolution set and AI uses it as a wildcard", () => {
+  const game = new DaifugoGame({ random: () => 0.42 });
+  const tens = ["♠", "♥", "♦"].map((suit) => ({
+    id: `${suit}-10`,
+    suit,
+    value: 10,
+    rank: "10"
+  }));
+  const joker = { id: "joker-1", joker: true };
+  const revolution = [joker, ...tens];
+  game.hands = [
+    [...revolution, { id: "keep-0", value: 3 }],
+    [{ id: "keep-1", value: 4 }],
+    [{ id: "keep-2", value: 5 }],
+    [{ id: "keep-3", value: 6 }]
+  ];
+  game.currentPlayer = 0;
+
+  assert.equal(game.canPlay(0, revolution), true);
+  assert.equal(game.play(0, revolution), true);
+  assert.equal(game.revolutionActive, true);
+  assert.equal(game.tableCard.value, 10);
+
+  game.hands[1] = [
+    ...["♠", "♥", "♦"].map((suit) => ({
+      id: `${suit}-9`,
+      suit,
+      value: 9,
+      rank: "9"
+    })),
+    { id: "joker-2", joker: true },
+    { id: "keep-ai", value: 3 }
+  ];
+  game.currentPlayer = 1;
+  const aiCards = game.chooseAiCard(1);
+  assert.equal(Array.isArray(aiCards), true);
+  assert.equal(aiCards.length, 4);
+  assert.equal(aiCards.some((card) => card.joker), true);
+  assert.equal(game.canPlay(1, aiCards), true);
+});
+
+test("revolution remains active when the table is passed out", () => {
+  const game = new DaifugoGame({ random: () => 0.42 });
+  const group = ["♠", "♥", "♦", "♣"].map((suit) => ({
+    id: `four-${suit}`,
+    suit,
+    value: 4
+  }));
+  game.hands = [
+    [...group, { id: "keep-0", value: 3 }],
+    [{ id: "keep-1", value: 5 }],
+    [{ id: "keep-2", value: 6 }],
+    [{ id: "keep-3", value: 7 }]
+  ];
+  game.currentPlayer = 0;
+
+  assert.equal(game.play(0, group), true);
+  game.pass(1);
+  game.pass(2);
+  game.pass(3);
+
+  assert.equal(game.tableCard, null);
+  assert.equal(game.revolutionActive, true);
+  assert.equal(game.currentPlayer, 0);
+});
+
 test("joker cannot be played from a joker-only hand", () => {
   const game = new DaifugoGame({ random: () => 0.42 });
   const joker = { joker: true, id: "joker-1", rank: "ジョーカー" };
@@ -429,4 +546,26 @@ test("everyone passing ends the round and starts it with the last card player", 
   assert.deepEqual([...game.passedPlayers], [1, 2, 3]);
   assert.equal(game.play(0, game.hands[0][0]), true);
   assert.equal(game.passedPlayers.size, 0);
+});
+
+test("the game continues after first place and ends when last place is determined", () => {
+  const game = new DaifugoGame({ random: () => 0.42 });
+  game.hands = [
+    [{ id: "♠-3", value: 3 }],
+    [{ id: "♠-4", value: 4 }],
+    [{ id: "♠-5", value: 5 }],
+    [{ id: "♠-6", value: 6 }]
+  ];
+  game.currentPlayer = 0;
+
+  assert.equal(game.play(0, game.hands[0][0]), true);
+  assert.deepEqual(game.winners, [0]);
+  assert.equal(game.finished, false);
+  assert.equal(game.currentPlayer, 1);
+
+  assert.equal(game.play(1, game.hands[1][0]), true);
+  assert.equal(game.play(2, game.hands[2][0]), true);
+  assert.deepEqual(game.winners, [0, 1, 2]);
+  assert.equal(game.lastPlacePlayer, 3);
+  assert.equal(game.finished, true);
 });
